@@ -1,8 +1,8 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { Copy, ThumbsUp, ThumbsDown, Mail, CheckCircle } from "lucide-react"
+import { Copy, ThumbsUp, ThumbsDown, Mail, CheckCircle, Send, RefreshCw } from "lucide-react"
 import toast from "react-hot-toast"
-import { submitFeedback } from "../api"
+import { submitFeedback, sendGmailReply, regenerateReplies } from "../api"
 import { tk, FONTS } from "../theme"
 
 const CATEGORY_STYLE = {
@@ -29,6 +29,32 @@ export default function ResultPanel({ result, isLoading, dark = true }) {
   const t = tk(dark)
   const [feedback, setFeedback] = useState({})
   const [copied,   setCopied]   = useState(null)
+  const [sending,  setSending]  = useState(null)
+
+  const [localReplies, setLocalReplies] = useState([])
+  const [draftInstructions, setDraftInstructions] = useState({})
+  const [draftLoading, setDraftLoading] = useState({})
+
+  useEffect(() => {
+    if (result && result.replies) {
+      setLocalReplies(result.replies)
+    }
+  }, [result])
+
+  const handleRegenerate = async (tone) => {
+    if (!result?.email_id) return
+    setDraftLoading(prev => ({ ...prev, [tone]: true }))
+    try {
+      const instr = draftInstructions[tone] || ""
+      const newReplies = await regenerateReplies(result.email_id, tone, instr)
+      setLocalReplies(newReplies)
+      toast.success(`${tone} reply regenerated!`)
+    } catch (err) {
+      toast.error(`Failed to regenerate ${tone} reply.`)
+    } finally {
+      setDraftLoading(prev => ({ ...prev, [tone]: false }))
+    }
+  }
 
   // ── Skeleton while loading ─────────────────────────────────────────────────
   if (isLoading) {
@@ -94,6 +120,25 @@ export default function ResultPanel({ result, isLoading, dark = true }) {
     setTimeout(() => setCopied(null), 2000)
   }
 
+  const handleSend = async (replyId, text) => {
+    const sender = result?._sender
+    const sub = result?._subject || ""
+    if (!sender) {
+      toast.error("Original sender missing. Cannot send reply.")
+      return
+    }
+    setSending(replyId)
+    try {
+      const subject = sub.toLowerCase().startsWith("re:") ? sub : `Re: ${sub || "Your Email"}`
+      await sendGmailReply(sender, subject, text)
+      toast.success("Reply sent via Gmail!", { icon: "🚀" })
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || err.message || "Failed to send reply.")
+    } finally {
+      setSending(null)
+    }
+  }
+
   // ── Pick category colours based on dark / light ────────────────────────────
   const catStyle = dark
     ? (CATEGORY_STYLE[result.category]       || CATEGORY_STYLE.fyi)
@@ -155,6 +200,8 @@ export default function ResultPanel({ result, isLoading, dark = true }) {
         }
         .dislike-btn:hover  { background:${dark?"rgba(239,68,68,0.18)":"#fee2e2"}; }
         .dislike-btn.active { background:#ef4444; color:#fff; }
+        .send-btn { background:${dark?"rgba(99,102,241,0.1)":"#eef2ff"}; color:#6366f1; }
+        .send-btn:hover { background:${dark?"rgba(99,102,241,0.18)":"#e0e7ff"}; }
       `}</style>
 
       <motion.div className="rp"
@@ -215,14 +262,16 @@ export default function ResultPanel({ result, isLoading, dark = true }) {
         {/* ── Reply drafts ───────────────────────────────────────────── */}
         <motion.div variants={fadeUp} className="rp-card"
           style={{ padding:"20px 22px" }}>
-          <p style={{ fontSize:9, fontWeight:600, letterSpacing:"0.14em",
-                      color:t.textFaint, textTransform:"uppercase",
-                      margin:"0 0 14px", fontFamily:"'DM Sans',sans-serif" }}>
-            Reply Drafts
-          </p>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14 }}>
+            <p style={{ fontSize:9, fontWeight:600, letterSpacing:"0.14em",
+                        color:t.textFaint, textTransform:"uppercase",
+                        margin:0, fontFamily:"'DM Sans',sans-serif" }}>
+              Reply Drafts
+            </p>
+          </div>
 
           <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-            {result.replies.map((reply) => {
+            {localReplies.map((reply) => {
               const isLiked    = feedback[reply.id] === "liked"
               const isDisliked = feedback[reply.id] === "disliked"
               const isCopied   = copied === reply.id
@@ -276,17 +325,60 @@ export default function ResultPanel({ result, isLoading, dark = true }) {
                             : <><Copy size={11}/>Copy</>
                           }
                         </button>
+
+                        {/* send */}
+                        <button
+                          className="action-btn send-btn"
+                          onClick={() => handleSend(reply.id, reply.draft_text)}
+                          disabled={sending === reply.id}
+                          title="Send Reply via Gmail">
+                          {sending === reply.id 
+                            ? <><span className="spin" style={{borderColor:"rgba(99,102,241,0.3)", borderTopColor:"#6366f1"}}/>Sending</>
+                            : <><Send size={11}/>Send</>
+                          }
+                        </button>
                       </div>
                     </div>
 
                     {/* draft text */}
-                    <p style={{
-                      margin:0, fontSize:13, color:t.textSecondary,
-                      lineHeight:1.8, whiteSpace:"pre-wrap",
-                      fontFamily:"'DM Sans',sans-serif",
-                    }}>
-                      {reply.draft_text}
-                    </p>
+                    <textarea 
+                      value={reply.draft_text}
+                      onChange={e => {
+                        setLocalReplies(prev => prev.map(r => 
+                          r.id === reply.id ? { ...r, draft_text: e.target.value } : r
+                        ))
+                      }}
+                      style={{
+                        width: "100%", minHeight: 90, padding: 12, borderRadius: 8,
+                        background: dark ? "rgba(0,0,0,0.1)" : "#fff",
+                        border: `1px solid ${dark ? "rgba(255,255,255,0.05)" : "#e2e8f0"}`,
+                        color: t.textSecondary, fontSize: 13, lineHeight: 1.6,
+                        fontFamily: "'DM Sans',sans-serif", resize: "vertical", outline: "none",
+                        marginBottom: 10
+                      }}
+                    />
+
+                    <div style={{ display:"flex", alignItems:"center", gap:8, justifyContent:"flex-end" }}>
+                      <input 
+                        type="text" 
+                        placeholder="Refine this draft (e.g. make it shorter)"
+                        value={draftInstructions[reply.tone] || ""}
+                        onChange={e => setDraftInstructions(prev => ({...prev, [reply.tone]: e.target.value}))}
+                        style={{
+                          padding: "6px 10px", fontSize: 11, borderRadius: 8,
+                          border: `1px solid ${t.cardBorder}`, background: dark ? "rgba(0,0,0,0.15)" : "#fff",
+                          color: t.textSecondary, outline: "none", flex: 1,
+                          fontFamily: "'DM Sans',sans-serif"
+                        }}
+                      />
+                      <button 
+                        onClick={() => handleRegenerate(reply.tone)}
+                        disabled={draftLoading[reply.tone]}
+                        className="action-btn send-btn"
+                        style={{ padding: "6px 12px" }}>
+                        {draftLoading[reply.tone] ? <><span className="spin" style={{borderColor:"rgba(99,102,241,0.3)", borderTopColor:"#6366f1"}}/> Regenerating</> : <><RefreshCw size={11}/> Regenerate</>}
+                      </button>
+                    </div>
 
                   </motion.div>
                 </AnimatePresence>

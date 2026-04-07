@@ -36,8 +36,11 @@ export const getHistory = async () => {
   return response.data
 }
 
-export const regenerateReplies = async (emailId, tone) => {
-  const response = await api.post(`/api/email/${emailId}/regenerate?tone=${tone}`)
+export const regenerateReplies = async (emailId, tone, custom_instruction) => {
+  const payload = {}
+  if (tone) payload.tone = tone
+  if (custom_instruction) payload.custom_instruction = custom_instruction
+  const response = await api.post(`/api/email/${emailId}/regenerate`, payload)
   return response.data
 }
 
@@ -76,15 +79,29 @@ export const analyzeEmailWithAttachment = async (data, file) => {
   })
   return response.data
 }
-export const fetchGmailEmails = async () => {
+export const fetchGmailEmails = async (timeframe = "today") => {
   const googleToken = localStorage.getItem("google_token")
   if (!googleToken) {
     throw new Error("No Google token. Please login with Google.")
   }
   const response = await api.get("/api/auth/gmail/messages", {
-    params: { google_token: googleToken },
+    params: { google_token: googleToken, timeframe },
   })
   return response.data.emails
+}
+
+export const sendGmailReply = async (recipient, subject, body) => {
+  const googleToken = localStorage.getItem("google_token")
+  if (!googleToken) {
+    throw new Error("No Google token. Please login with Google.")
+  }
+  const response = await api.post("/api/auth/gmail/send", {
+    google_token: googleToken,
+    recipient,
+    subject,
+    body
+  })
+  return response.data
 }
 export const getEmailDetail = async (emailId) => {
   const response = await api.get(`/api/email/${emailId}`)

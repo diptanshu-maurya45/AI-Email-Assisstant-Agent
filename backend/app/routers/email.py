@@ -11,6 +11,7 @@ from app.schemas import (
     FeedbackRequest,
     FeedbackResponse,
     ReplyOut,
+    RegenerateRequest,
 )
 from app.services.ai_service import classify_email, summarize_email, generate_replies, detect_thread
 from app.services.file_parser import extract_text_from_file
@@ -33,7 +34,7 @@ async def analyze_email_endpoint(
 
     classification = await classify_email(request.subject or "", request.body)
     summary = await summarize_email(request.subject or "", request.body)
-    reply_drafts = await generate_replies(request.subject or "", request.body, preferred_tone)
+    reply_drafts = await generate_replies(request.subject or "", request.body, current_user.name, request.sender or "Sender", preferred_tone)
 
     email = Email(
         user_id=current_user.id,
@@ -107,7 +108,7 @@ async def analyze_email_with_attachment(
 
     classification = await classify_email(subject or "", full_body)
     summary = await summarize_email(subject or "", full_body)
-    reply_drafts = await generate_replies(subject or "", full_body, pref_tone)
+    reply_drafts = await generate_replies(subject or "", full_body, current_user.name, sender or "Sender", pref_tone)
 
     email = Email(
         user_id=current_user.id,
@@ -194,7 +195,7 @@ async def get_email_detail(
 @router.post("/{email_id}/regenerate", response_model=list[ReplyOut])
 async def regenerate_replies(
     email_id: int,
-    tone: str | None = None,
+    request: RegenerateRequest,
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -206,11 +207,23 @@ async def regenerate_replies(
     if not email:
         raise HTTPException(status_code=404, detail="Email not found.")
 
-    old_replies = await db.execute(select(Reply).where(Reply.email_id == email_id))
+    if request.tone:
+        old_replies = await db.execute(select(Reply).where(Reply.email_id == email_id, Reply.tone == request.tone))
+    else:
+        old_replies = await db.execute(select(Reply).where(Reply.email_id == email_id))
+        
     for old in old_replies.scalars().all():
         await db.delete(old)
 
-    new_drafts = await generate_replies(email.subject or "", email.body, tone)
+    new_drafts = await generate_replies(
+        email.subject or "",
+        email.body,
+        current_user.name,
+        email.sender or "Sender",
+        None,
+        request.custom_instruction,
+        request.tone
+    )
 
     reply_objects = []
     for draft in new_drafts:
@@ -223,10 +236,11 @@ async def regenerate_replies(
         reply_objects.append(reply)
 
     await db.commit()
-    for r in reply_objects:
-        await db.refresh(r)
+    
+    all_replies = await db.execute(select(Reply).where(Reply.email_id == email_id))
+    all_reply_objects = all_replies.scalars().all()
 
-    return [ReplyOut.model_validate(r) for r in reply_objects]
+    return [ReplyOut.model_validate(r) for r in all_reply_objects]
 
 
 @router.post("/{reply_id}/feedback", response_model=FeedbackResponse)

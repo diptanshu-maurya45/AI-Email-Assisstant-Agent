@@ -4,12 +4,12 @@ import { Mail, RefreshCw, ArrowRight, Inbox, AlertCircle, Clock } from "lucide-r
 import toast from "react-hot-toast"
 import { fetchGmailEmails } from "../api"
 
-export default function GmailInbox({ onSelectEmail }) {
-  const [emails, setEmails]     = useState([])
+export default function GmailInbox({ onSelectEmail, gmailData, setGmailData }) {
   const [loading, setLoading]   = useState(false)
   const [error, setError]       = useState(null)
-  const [fetched, setFetched]   = useState(false)
   const [selected, setSelected] = useState(null)
+
+  const { emails, fetched, timeframe } = gmailData
 
   const hasGoogleToken = !!localStorage.getItem("google_token")
 
@@ -17,9 +17,8 @@ export default function GmailInbox({ onSelectEmail }) {
     setLoading(true)
     setError(null)
     try {
-      const data = await fetchGmailEmails()
-      setEmails(data)
-      setFetched(true)
+      const data = await fetchGmailEmails(timeframe)
+      setGmailData(prev => ({ ...prev, emails: data, fetched: true }))
       toast.success(`Fetched ${data.length} emails from Gmail`, { icon: "📬" })
     } catch (err) {
       const msg = err.response?.data?.detail || "Failed to fetch emails. Try logging in with Google."
@@ -71,16 +70,28 @@ export default function GmailInbox({ onSelectEmail }) {
               </p>
             </div>
           </div>
-          <button
-            onClick={handleFetch}
-            disabled={loading}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-[12px] font-bold text-white transition-all cursor-pointer ${
-              loading ? "bg-slate-400 cursor-not-allowed" : "bg-gradient-to-r from-red-500 to-pink-600 hover:from-red-600 hover:to-pink-700 shadow-lg shadow-red-500/20"
-            }`}
-          >
-            <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
-            {loading ? "Fetching..." : fetched ? "Refresh" : "Fetch Emails"}
-          </button>
+          <div className="flex items-center gap-3">
+            <select
+              value={timeframe}
+              onChange={(e) => setGmailData(prev => ({ ...prev, timeframe: e.target.value, fetched: false }))}
+              className="bg-transparent border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-[12px] font-medium rounded-xl px-3 py-2 outline-none"
+            >
+              <option value="today">Today</option>
+              <option value="two_days">Last 2 Days</option>
+              <option value="last_week">Last Week</option>
+              <option value="last_20">Last 20 Mails</option>
+            </select>
+            <button
+              onClick={handleFetch}
+              disabled={loading}
+              className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-[12px] font-bold text-white transition-all cursor-pointer ${
+                loading ? "bg-slate-400 cursor-not-allowed" : "bg-gradient-to-r from-red-500 to-pink-600 hover:from-red-600 hover:to-pink-700 shadow-lg shadow-red-500/20"
+              }`}
+            >
+              <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+              {loading ? "Fetching..." : fetched ? "Refresh" : "Fetch Emails"}
+            </button>
+          </div>
         </div>
       </div>
 

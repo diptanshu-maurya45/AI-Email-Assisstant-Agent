@@ -29,6 +29,7 @@ export default function App() {
   const [view,       setView]       = useState("home")
   const [dark,       setDark]       = useState(true)
   const [gmailEmail, setGmailEmail] = useState(null)
+  const [gmailData, setGmailData]   = useState({ emails: [], fetched: false, timeframe: "today" })
 
   const [user, setUser] = useState(() => {
     const token = localStorage.getItem("token")
@@ -49,6 +50,7 @@ export default function App() {
     setIsLoading(false)
     setView("home")
     setGmailEmail(null)
+    setGmailData({ emails: [], fetched: false, timeframe: "today" })
   }
 
   const handleGmailSelect = (emailData) => {
@@ -174,7 +176,7 @@ export default function App() {
                 )}
                 {view==="gmail" && (
                   <motion.div key="gmail" variants={pageVariants} initial="initial" animate="animate" exit="exit">
-                    <GmailInbox onSelectEmail={handleGmailSelect} dark={dark}/>
+                    <GmailInbox onSelectEmail={handleGmailSelect} dark={dark} gmailData={gmailData} setGmailData={setGmailData}/>
                   </motion.div>
                 )}
                 {view==="analytics" && (

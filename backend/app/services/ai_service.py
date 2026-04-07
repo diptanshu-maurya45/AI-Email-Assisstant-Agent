@@ -169,7 +169,11 @@ async def summarize_email(subject: str, body: str) -> str:
 async def generate_replies(
     subject: str,
     body: str,
+    recipient_name: str,
+    sender_name: str,
     preferred_tone: str | None = None,
+    custom_instruction: str | None = None,
+    target_tone: str | None = None,
 ) -> list[dict]:
     tone_hint = (
         f"The user prefers {preferred_tone} replies — "
@@ -177,19 +181,40 @@ async def generate_replies(
         if preferred_tone else ""
     )
 
+    if target_tone:
+        schema = '{"replies": [{"tone": "' + target_tone + '", "draft": "<reply>"}]}'
+        task_instruction = f"Write ONLY A {target_tone.upper()} reply draft for this email."
+        instruction_hint = (
+            f"IMPORTANT USER INSTRUCTION: {custom_instruction}\n"
+            "Ensure your draft incorporates this instruction.\n"
+            if custom_instruction else ""
+        )
+    else:
+        schema = '{"replies": [{"tone": "formal", "draft": "<reply>"}, {"tone": "friendly", "draft": "<reply>"}, {"tone": "brief", "draft": "<reply>"}]}'
+        task_instruction = "Write 3 reply drafts for this email."
+        instruction_hint = (
+            f"IMPORTANT USER INSTRUCTION: {custom_instruction}\n"
+            "Ensure ALL of your drafts heavily incorporate this instruction.\n"
+            if custom_instruction else ""
+        )
+
+    identity_hint = (
+        f"You are writing on behalf of '{recipient_name}'. Address the reply TO '{sender_name}'. \n"
+        f"The email should start with a greeting to '{sender_name}' and end with a sign-off from '{recipient_name}'.\n"
+    )
+
     system = (
-        "You are a professional email reply assistant. "
-        f"{tone_hint}"
-        "Respond ONLY with valid JSON. No markdown, no explanation. "
-        'Schema: {"replies": ['
-        '{"tone": "formal",   "draft": "<reply>"},'
-        '{"tone": "friendly", "draft": "<reply>"},'
-        '{"tone": "brief",    "draft": "<reply>"}'
-        "]}"
+        "You are an email assistant writing a REPLY back to the sender ON BEHALF OF the recipient. "
+        "DO NOT summarize the email. Write a direct response that can be sent as an email reply directly to the sender. "
+        f"{identity_hint}"
+        f"{tone_hint}\n"
+        f"{instruction_hint}"
+        "Respond ONLY with valid JSON. No markdown, no explanation.\n"
+        f"Schema: {schema}"
     )
 
     user = (
-        f"Write 3 reply drafts for this email.\n\n"
+        f"{task_instruction}\n\n"
         f"Subject: {subject or 'No subject'}\n\n"
         f"Body:\n{body}"
     )
@@ -199,6 +224,9 @@ async def generate_replies(
     try:
         result  = _parse_json(raw)
         replies = result.get("replies", [])
+
+        if target_tone and len(replies) > 0:
+            return replies
 
         if len(replies) == 3:
             return replies

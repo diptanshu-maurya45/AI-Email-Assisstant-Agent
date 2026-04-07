@@ -11,7 +11,7 @@ import base64
 
 from app.database import get_db
 from app.models import User
-from app.schemas import SignupRequest, LoginRequest, AuthResponse
+from app.schemas import SignupRequest, LoginRequest, AuthResponse, SendEmailRequest
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
 
@@ -139,15 +139,34 @@ async def google_login(token: dict, db: AsyncSession = Depends(get_db)):
 @router.get("/gmail/messages")
 async def get_gmail_messages(
     google_token: str,
-    max_results: int = 10,
+    timeframe: str = "today",
     current_user: User = Depends(get_current_user),
 ):
     try:
         async with httpx.AsyncClient() as client:
+            max_results = 10
+            q = ""
+            if timeframe == "today":
+                q = "newer_than:1d"
+                max_results = 50
+            elif timeframe == "two_days":
+                q = "newer_than:2d"
+                max_results = 50
+            elif timeframe == "last_week":
+                q = "newer_than:7d"
+                max_results = 50
+            elif timeframe == "last_20":
+                max_results = 20
+                q = ""
+            
+            params = {"maxResults": max_results, "labelIds": "INBOX"}
+            if q:
+                params["q"] = q
+
             list_response = await client.get(
                 "https://gmail.googleapis.com/gmail/v1/users/me/messages",
                 headers={"Authorization": f"Bearer {google_token}"},
-                params={"maxResults": max_results, "labelIds": "INBOX"},
+                params=params,
             )
 
             if list_response.status_code != 200:
@@ -192,6 +211,35 @@ async def get_gmail_messages(
                 })
 
             return {"emails": emails}
+
+    except httpx.RequestError:
+        raise HTTPException(status_code=500, detail="Failed to connect to Gmail API")
+
+@router.post("/gmail/send")
+async def send_gmail(
+    request: SendEmailRequest,
+    current_user: User = Depends(get_current_user),
+):
+    from email.mime.text import MIMEText
+    import base64
+    
+    message = MIMEText(request.body)
+    message["to"] = request.recipient
+    message["subject"] = request.subject
+    
+    raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+                headers={"Authorization": f"Bearer {request.google_token}"},
+                json={"raw": raw_message},
+            )
+            if response.status_code != 200:
+                raise HTTPException(status_code=400, detail=f"Failed to send email: {response.text}")
+            
+            return {"status": "success", "message": "Email sent successfully."}
 
     except httpx.RequestError:
         raise HTTPException(status_code=500, detail="Failed to connect to Gmail API")
